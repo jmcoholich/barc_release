@@ -15,7 +15,7 @@ import trimesh
 import sys
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..'))
 from stacked_hourglass.utils.evaluation import accuracy, AverageMeter, final_preds, get_preds, get_preds_soft
-from stacked_hourglass.utils.visualization import save_input_image_with_keypoints, save_input_image
+from stacked_hourglass.utils.visualization import save_input_image_with_keypoints, save_input_image, unnorm_input_image
 from metrics.metrics import Metrics
 from configs.SMAL_configs import EVAL_KEYPOINTS, KEYPOINT_GROUPS
 
@@ -388,67 +388,76 @@ def do_visual_epoch(val_loader, model, device, data_info, flip=False, quiet=Fals
         ind_img = 0
         if save_imgs_path is not None:
             for ind_img in range(batch_size): #  range(min(12, batch_size)):     # range(12):    # [0]:  #range(0, batch_size):
-
-                try: 
-                    if test_name_list is not None:
-                        img_name = test_name_list[int(target_dict['index'][ind_img].cpu().detach().numpy())].replace('/', '_')
-                        img_name = img_name.split('.')[0]
-                    else:
-                        img_name = str(index) + '_' + str(ind_img)
-                    visualizations = model.render_vis_nograd(vertices=output_reproj['vertices_smal'],
-                                                            focal_lengths=output_unnorm['flength'],
-                                                            color=0)    # 2)
-                    # save image with predicted keypoints
-                    out_path = save_imgs_path + '/keypoints_pred_' + img_name + '.png'
-                    pred_unp = (output['keypoints_norm'][ind_img, :, :] + 1.) / 2 * (data_info.image_size - 1)
-                    pred_unp_maxval = output['keypoints_scores'][ind_img, :, :]
-                    pred_unp_prep = torch.cat((pred_unp, pred_unp_maxval), 1)
+                imgs_to_save = []
+                # try: 
+                if test_name_list is not None:
+                    img_name = test_name_list[int(target_dict['index'][ind_img].cpu().detach().numpy())].replace('/', '_')
+                    img_name = img_name.split('.')[0]
+                else:
+                    img_name = str(index) + '_' + str(ind_img)
+                visualizations = model.render_vis_nograd(vertices=output_reproj['vertices_smal'],
+                                                        focal_lengths=output_unnorm['flength'],
+                                                        color=0)    # 2)
+                # save image with predicted keypoints
+                out_path = save_imgs_path + '/keypoints_pred_' + img_name + '.png'
+                pred_unp = (output['keypoints_norm'][ind_img, :, :] + 1.) / 2 * (data_info.image_size - 1)
+                pred_unp_maxval = output['keypoints_scores'][ind_img, :, :]
+                pred_unp_prep = torch.cat((pred_unp, pred_unp_maxval), 1)
+                inp_img = input[ind_img, :, :, :].detach().clone()
+                keypoints_img = save_input_image_with_keypoints(inp_img, pred_unp_prep, out_path=out_path, threshold=0.1, print_scores=True, ratio_in_out=1.0)    # threshold=0.3
+                imgs_to_save.append(keypoints_img)
+                # save predicted 3d model
+                #   (1) front view
+                pred_tex = visualizations[ind_img, :, :, :].permute((1, 2, 0)).cpu().detach().numpy() / 256
+                pred_tex_max = np.max(pred_tex, axis=2)
+                out_path = save_imgs_path + '/tex_pred_' + img_name + '.png'
+                # plt.imsave(out_path, pred_tex)
+                imgs_to_save.append(pred_tex)
+                input_image = input[ind_img, :, :, :].detach().clone()
+                for t, m, s in zip(input_image, data_info.rgb_mean, data_info.rgb_stddev): t.add_(m)
+                input_image_np = input_image.detach().cpu().numpy().transpose(1, 2, 0) 
+                alpha = 0.5
+                im_masked = cv2.addWeighted(input_image_np, alpha, pred_tex, 1-alpha, 0)
+                im_masked[pred_tex_max<0.01, :] = input_image_np[pred_tex_max<0.01, :]
+                out_path = save_imgs_path + '/comp_pred_' + img_name + '.png'
+                # plt.imsave(out_path, im_masked)
+                imgs_to_save.append(im_masked)
+                #   (2) side view
+                vertices_cent = output_reproj['vertices_smal'] - output_reproj['vertices_smal'].mean(dim=1)[:, None, :]
+                roll = np.pi / 2 * torch.ones(1).float().to(device)
+                pitch = np.pi / 2 * torch.ones(1).float().to(device)
+                tensor_0 = torch.zeros(1).float().to(device)
+                tensor_1 = torch.ones(1).float().to(device)
+                RX = torch.stack([torch.stack([tensor_1, tensor_0, tensor_0]), torch.stack([tensor_0, torch.cos(roll), -torch.sin(roll)]),torch.stack([tensor_0, torch.sin(roll), torch.cos(roll)])]).reshape(3,3)
+                RY = torch.stack([
+                    torch.stack([torch.cos(pitch), tensor_0, torch.sin(pitch)]),
+                    torch.stack([tensor_0, tensor_1, tensor_0]),
+                    torch.stack([-torch.sin(pitch), tensor_0, torch.cos(pitch)])]).reshape(3,3)
+                vertices_rot = (torch.matmul(RY, vertices_cent.reshape((-1, 3))[:, :, None])).reshape((batch_size, -1, 3))
+                vertices_rot[:, :, 2] = vertices_rot[:, :, 2] + torch.ones_like(vertices_rot[:, :, 2]) * 20     # 18     # *16
+                visualizations_rot = model.render_vis_nograd(vertices=vertices_rot,
+                                                        focal_lengths=output_unnorm['flength'],
+                                                        color=0)    # 2)
+                pred_tex = visualizations_rot[ind_img, :, :, :].permute((1, 2, 0)).cpu().detach().numpy() / 256
+                pred_tex_max = np.max(pred_tex, axis=2)
+                out_path = save_imgs_path + '/rot_tex_pred_' + img_name + '.png'
+                # plt.imsave(out_path, pred_tex)
+                imgs_to_save.append(pred_tex)
+                render_all = True
+                if render_all:
+                    # save input image 
                     inp_img = input[ind_img, :, :, :].detach().clone()
-                    save_input_image_with_keypoints(inp_img, pred_unp_prep, out_path=out_path, threshold=0.1, print_scores=True, ratio_in_out=1.0)    # threshold=0.3
-                    # save predicted 3d model
-                    #   (1) front view
-                    pred_tex = visualizations[ind_img, :, :, :].permute((1, 2, 0)).cpu().detach().numpy() / 256
-                    pred_tex_max = np.max(pred_tex, axis=2)
-                    out_path = save_imgs_path + '/tex_pred_' + img_name + '.png'
-                    plt.imsave(out_path, pred_tex)
-                    input_image = input[ind_img, :, :, :].detach().clone()
-                    for t, m, s in zip(input_image, data_info.rgb_mean, data_info.rgb_stddev): t.add_(m)
-                    input_image_np = input_image.detach().cpu().numpy().transpose(1, 2, 0) 
-                    im_masked = cv2.addWeighted(input_image_np,0.2,pred_tex,0.8,0)
-                    im_masked[pred_tex_max<0.01, :] = input_image_np[pred_tex_max<0.01, :]
-                    out_path = save_imgs_path + '/comp_pred_' + img_name + '.png'
-                    plt.imsave(out_path, im_masked)
-                    #   (2) side view
-                    vertices_cent = output_reproj['vertices_smal'] - output_reproj['vertices_smal'].mean(dim=1)[:, None, :]
-                    roll = np.pi / 2 * torch.ones(1).float().to(device)
-                    pitch = np.pi / 2 * torch.ones(1).float().to(device)
-                    tensor_0 = torch.zeros(1).float().to(device)
-                    tensor_1 = torch.ones(1).float().to(device)
-                    RX = torch.stack([torch.stack([tensor_1, tensor_0, tensor_0]), torch.stack([tensor_0, torch.cos(roll), -torch.sin(roll)]),torch.stack([tensor_0, torch.sin(roll), torch.cos(roll)])]).reshape(3,3)
-                    RY = torch.stack([
-                        torch.stack([torch.cos(pitch), tensor_0, torch.sin(pitch)]),
-                        torch.stack([tensor_0, tensor_1, tensor_0]),
-                        torch.stack([-torch.sin(pitch), tensor_0, torch.cos(pitch)])]).reshape(3,3)
-                    vertices_rot = (torch.matmul(RY, vertices_cent.reshape((-1, 3))[:, :, None])).reshape((batch_size, -1, 3))
-                    vertices_rot[:, :, 2] = vertices_rot[:, :, 2] + torch.ones_like(vertices_rot[:, :, 2]) * 20     # 18     # *16
-                    visualizations_rot = model.render_vis_nograd(vertices=vertices_rot,
-                                                            focal_lengths=output_unnorm['flength'],
-                                                            color=0)    # 2)
-                    pred_tex = visualizations_rot[ind_img, :, :, :].permute((1, 2, 0)).cpu().detach().numpy() / 256
-                    pred_tex_max = np.max(pred_tex, axis=2)
-                    out_path = save_imgs_path + '/rot_tex_pred_' + img_name + '.png'
-                    plt.imsave(out_path, pred_tex)
-                    render_all = True
-                    if render_all:
-                        # save input image 
-                        inp_img = input[ind_img, :, :, :].detach().clone()
-                        out_path = save_imgs_path + '/image_' + img_name + '.png'
-                        save_input_image(inp_img, out_path)
-                        # save posed mesh
-                        V_posed = output_reproj['vertices_smal'][ind_img, :, :].detach().cpu().numpy()
-                        Faces = model.smal.f
-                        mesh_posed = trimesh.Trimesh(vertices=V_posed, faces=Faces, process=False)
-                        mesh_posed.export(save_imgs_path + '/mesh_posed_' + img_name + '.obj')
-                except:
-                    print('pass...')
+                    out_path = save_imgs_path + '/image_' + img_name + '.png'
+                    # save_input_image(inp_img, out_path)
+                    
+                    imgs_to_save.append(unnorm_input_image(inp_img))
+                    # save posed mesh
+                    V_posed = output_reproj['vertices_smal'][ind_img, :, :].detach().cpu().numpy()
+                    Faces = model.smal.f
+                    mesh_posed = trimesh.Trimesh(vertices=V_posed, faces=Faces, process=False)
+                    # mesh_posed.export(save_imgs_path + '/mesh_posed_' + img_name + '.obj')
+                # except:
+                #     print('pass...')
+                total_img = np.concatenate(imgs_to_save, axis=1)
+                plt.imsave(out_path, total_img)
     return

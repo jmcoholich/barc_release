@@ -43,7 +43,7 @@ def save_input_image_with_keypoints(img, tpts, out_path='./test_input.png', colo
     plt.imshow(img_np)     # plt.imshow(im)
     plt.gca().set_axis_off()
     plt.subplots_adjust(top = 1, bottom = 0, right = 1, left = 0, hspace = 0, wspace = 0)
-    plt.margins(0,0)
+    # plt.margins(0,0)
     # plot all visible keypoints
     #import pdb; pdb.set_trace()
 
@@ -56,18 +56,31 @@ def save_input_image_with_keypoints(img, tpts, out_path='./test_input.png', colo
                 txt = '{:2.2f}'.format(v.item())
                 plt.annotate(txt, (x, y))        # , c=colors[idx])
 
-    plt.savefig(out_path, bbox_inches='tight', pad_inches=0)
+    # plt.savefig(out_path, bbox_inches='tight', pad_inches=0)
+    fig.set_size_inches(2.56, 2.56)
 
-    plt.close()
-    return
+    fig.canvas.draw()
+    fig.tight_layout(pad=0)
+
+    # Now we can save it to a numpy array.
+    data = np.frombuffer(fig.canvas.tostring_rgb(), dtype=np.uint8)
+    data = data.reshape(fig.canvas.get_width_height()[::-1] + (3,))
+    data = data.copy().astype(np.float32)
+    data /= 255.0
+    # plt.imsave(out_path, data)
+    # plt.close()
+    return data
 
 
 
 def save_input_image(img, out_path, colors=COLORS, rgb_mean=RGB_MEAN, rgb_std=RGB_STD):
+    plt.imsave(out_path, unnorm_input_image(img, colors=COLORS, rgb_mean=RGB_MEAN, rgb_std=RGB_STD))
+    return
+
+def unnorm_input_image(img, colors=COLORS, rgb_mean=RGB_MEAN, rgb_std=RGB_STD):
     for t, m, s in zip(img, rgb_mean, rgb_std): t.add_(m)       # inverse to transforms.color_normalize()
     img_np = img.detach().cpu().numpy().transpose(1, 2, 0) 
-    plt.imsave(out_path, img_np)
-    return
+    return img_np
 
 ######################################################################
 def get_bodypart_colors():
