@@ -202,7 +202,7 @@ def main(args):
     train_loader = DataLoader(
         train_dataset,
         batch_sampler=train_custom_batch_sampler,
-        num_workers=args.workers, pin_memory=True)
+        num_workers=args.workers, pin_memory=True, persistent_workers=True)
 
     if cfg.data.VAL_METRICS == 'no_loss':
         # this is the option that we choose normally
@@ -213,7 +213,7 @@ def main(args):
         val_loader = DataLoader(
             val_dataset,
             batch_size=cfg.optim.BATCH_SIZE, shuffle=False,
-            num_workers=args.workers, pin_memory=True)
+            num_workers=args.workers, pin_memory=True, persistent_workers=True)
     else:
         # this is an option we might choose for debugging purposes
         # here we load val/test images using our custom sampler for pairs of dogs of the same breed
@@ -223,7 +223,7 @@ def main(args):
         val_loader = DataLoader(
             val_dataset,
             batch_sampler=val_custom_batch_sampler,
-            num_workers=args.workers, pin_memory=True)   
+            num_workers=args.workers, pin_memory=True, persistent_workers=True)
  
 
     # train and eval
