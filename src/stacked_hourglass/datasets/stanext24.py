@@ -39,7 +39,7 @@ class StanExt(data.Dataset):
 
     def __init__(self, image_path=None, is_train=True, inp_res=256, out_res=64, sigma=1,
                  scale_factor=0.25, rot_factor=30, label_type='Gaussian', 
-                 do_augment='default', shorten_dataset_to=None, dataset_mode='keyp_only', V12=None, val_opt='test'):
+                 do_augment='default', shorten_dataset_to=None, dataset_mode='keyp_only', V12=None, val_opt='test', use_bbox=False):
         self.V12 = V12
         self.is_train = is_train    # training set or test set
         if do_augment == 'yes':
@@ -53,6 +53,10 @@ class StanExt(data.Dataset):
                 self.do_augment = False
         else:
             raise ValueError
+        if use_bbox is None:
+            self.use_bbox = self.do_augment
+        else:
+            self.use_bbox = use_bbox
         self.inp_res = inp_res
         self.out_res = out_res
         self.sigma = sigma
@@ -167,13 +171,19 @@ class StanExt(data.Dataset):
         joints = np.concatenate((np.asarray(data['joints'])[:20, :], anipose_joints_0to24[20:24, :]), axis=0)
         joints[joints[:, 2]==0, :2] = 0     # avoid nan values
         pts = torch.Tensor(joints)
+        # For single-person pose estimation with a centered/scaled figure
+        nparts = pts.size(0)
+        img = load_image(img_path)  # CxHxW
 
         # inp = crop(img, c, s, [self.inp_res, self.inp_res], rot=r)
         # sf = scale * 200.0 / res[0]  # res[0]=256
         # center = center * 1.0 / sf
         # scale = scale / sf = 256 / 200
         # h = 200 * scale
-        bbox_xywh = data['img_bbox']
+        if self.use_bbox:
+            bbox_xywh = data['img_bbox']
+        else:
+            bbox_xywh = [0, 0, img.shape[2], img.shape[1]]
         bbox_c = [bbox_xywh[0]+0.5*bbox_xywh[2], bbox_xywh[1]+0.5*bbox_xywh[3]]
         bbox_max = max(bbox_xywh[2], bbox_xywh[3])
         bbox_diag = math.sqrt(bbox_xywh[2]**2 + bbox_xywh[3]**2)
@@ -183,9 +193,6 @@ class StanExt(data.Dataset):
         c = torch.Tensor(bbox_c)
         s = bbox_s
 
-        # For single-person pose estimation with a centered/scaled figure
-        nparts = pts.size(0)
-        img = load_image(img_path)  # CxHxW
 
         # segmentation map (we reshape it to 3xHxW, such that we can do the 
         #   same transformations as with the image)
@@ -299,3 +306,17 @@ class StanExt(data.Dataset):
             return len(self.test_name_list)   
 
 
+if __name__ == "__main__":
+    import matplotlib.pyplot as plt
+    # generate 10 augmentation of the same image using this code and save them to a folder
+    train_dataset = StanExt(
+        is_train=True,
+        do_augment="yes",
+        V12=True,
+        dataset_mode="complete",
+        use_bbox=False,
+    )
+    
+    for i in [403, 2]:
+        img, target_dict = train_dataset[i] 
+        plt.imsave(f'./test_input_stanext_{i}.png', img.numpy().transpose(1, 2, 0))

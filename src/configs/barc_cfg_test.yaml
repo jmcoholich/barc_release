@@ -5,7 +5,7 @@ paths:
   MODELPATH_NORMFLOW: './checkpoint/barc_normflow_pret/rgbddog_v3_model.pt'
   
 optim:
-  BATCH_SIZE: 12       # keep 12 (needs to be an even number, as we have a custom data sampler)
+  BATCH_SIZE: 20       # keep 12 (needs to be an even number, as we have a custom data sampler)
 
 data:
   DATASET: 'stanext24'
